@@ -3,8 +3,9 @@
 Написал свой фикс для Discord без скачивания лишних программ и т.п
 
 Нажимаете WIN + R и вставляете команду должна открыться папка
-
-```cmd /c "for /d %i in (%LOCALAPPDATA%\Discord\app-*) do start explorer %i\resources"```
+```bash
+cmd /c "for /d %i in (%LOCALAPPDATA%\Discord\app-*) do start explorer %i\resources"
+```
 
 Там будет файл app.asar либо _app.asar , вам нужно переименовать его в app.asar.back
 
