@@ -215,13 +215,16 @@ const startCore = () => {
 
   desktopCore = require('discord_desktop_core');
 
-  desktopCore.startup({
-    splashScreen: splash,
-    moduleUpdater,
-    buildInfo,
-    Constants,
-    updater,
-    autoStart,
+    desktopCore.startup({
+        splashScreen: splash,
+        moduleUpdater,
+        buildInfo,
+        Constants,
+        updater: {
+          getUpdater: () => null,
+          checkForUpdates: () => {},
+        },
+        autoStart,
 
     // Just requires
     appSettings: require('./appSettings'),
@@ -240,50 +243,55 @@ const startCore = () => {
 };
 
 const startUpdate = () => {
+  setupVPN()
+    .then(() => {
+      const urls = [
+        oaConfig.noTrack !== false ? 'https://*/api/*/science' : '',
+        oaConfig.noTrack !== false ? 'https://*/api/*/metrics' : '',
+        oaConfig.noTyping === true ? 'https://*/api/*/typing' : ''
+      ].filter(x => x);
 
-  setupVPN();
+      if (urls.length > 0) {
+        session.defaultSession.webRequest.onBeforeRequest({ urls }, (e, cb) => cb({ cancel: true }));
+      }
 
-  const urls = [
-    oaConfig.noTrack !== false ? 'https://*/api/*/science' : '',
-    oaConfig.noTrack !== false ? 'https://*/api/*/metrics' : '',
-    oaConfig.noTyping === true ? 'https://*/api/*/typing' : ''
-  ].filter(x => x);
+      const startMin = process.argv?.includes?.('--start-minimized');
 
-  if (urls.length > 0) session.defaultSession.webRequest.onBeforeRequest({ urls }, (e, cb) => cb({ cancel: true }));
+    if (updater.tryInitUpdater(buildInfo, Constants.NEW_UPDATE_ENDPOINT)) {
+        // const inst = updater.getUpdater();
+        
+        // inst.on('host-updated', () => autoStart.update(() => {}));
+        // inst.on('unhandled-exception', fatal);    inst.on('InconsistentInstallerState', fatal);
+        // inst.on('update-error', console.error);
 
-  const startMin = process.argv?.includes?.('--start-minimized');
+        require('./winFirst').do();
+    } else {
+        moduleUpdater.init(Constants.UPDATE_ENDPOINT, buildInfo);
+    }
 
-  if (updater.tryInitUpdater(buildInfo, Constants.NEW_UPDATE_ENDPOINT)) {
-    const inst = updater.getUpdater();
 
-    inst.on('host-updated', () => autoStart.update(() => {}));
-    inst.on('unhandled-exception', fatal);
-    inst.on('InconsistentInstallerState', fatal);
-    inst.on('update-error', console.error);
+      splash.events.once('APP_SHOULD_LAUNCH', () => {
+        if (!process.env.OPENASAR_NOSTART) startCore();
+      });
 
-    require('./winFirst').do();
-  } else {
-    moduleUpdater.init(Constants.UPDATE_ENDPOINT, buildInfo);
-  }
+      let done;
+      splash.events.once('APP_SHOULD_SHOW', () => {
+        if (done) return;
+        done = true;
 
-  splash.events.once('APP_SHOULD_LAUNCH', () => {
-    if (!process.env.OPENASAR_NOSTART) startCore();
-  });
+        desktopCore.setMainWindowVisible(!startMin);
 
-  let done;
-  splash.events.once('APP_SHOULD_SHOW', () => {
-    if (done) return;
-    done = true;
+        setTimeout(() => { // Try to update our asar
+          const config = require('./config');
+          if (oaConfig.setup !== true) config.open();
+        }, 3000);
+      });
 
-    desktopCore.setMainWindowVisible(!startMin);
-
-    setTimeout(() => { // Try to update our asar
-      const config = require('./config');
-      if (oaConfig.setup !== true) config.open();
-    }, 3000);
-  });
-
-  splash.initSplash(startMin);
+      splash.initSplash(startMin);
+    })
+    .catch(err => {
+      console.error("Failed to setup VPN or obtain admin rights:", err);
+    });
 };
 
 

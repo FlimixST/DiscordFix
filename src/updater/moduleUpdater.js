@@ -70,7 +70,6 @@ exports.init = (endpoint, { releaseChannel, version }) => {
     }
   }
 
-
   host = process.platform === 'linux' ? new (class HostLinux extends require('events').EventEmitter {
     setFeedURL(url) {
       this.url = url;
@@ -89,7 +88,6 @@ exports.init = (endpoint, { releaseChannel, version }) => {
       app.quit();
     }
   })() : autoUpdater;
-
 
   host.on('update-progress', progress => events.emit('downloading-module', { name: 'host', progress }));
 
@@ -120,7 +118,7 @@ const checkModules = async () => {
     if (inst !== rem) {
       log('Modules', 'Update:', name, inst, '->', rem);
 
-      downloadModule(name, rem);
+      await downloadModule(name, rem);
     }
   }
 
@@ -128,50 +126,77 @@ const checkModules = async () => {
 };
 
 const downloadModule = async (name, ver) => {
+  if (typeof downloading.total === 'undefined') {
+    downloading.total = 0;
+  }
   downloading.total++;
 
-  const path = join(downloadPath, name + '-' + ver + '.zip');
-  const file = fs.createWriteStream(path);
-
-  // log('Modules', 'Downloading', `${name}@${ver}`);
-
-  let success, total, cur =  0;
-  const res = await redirs(baseUrl + '/' + name + '/' + ver + qs);
-  success = res.statusCode === 200;
-  total = parseInt(res.headers['content-length'] ?? 1, 10);
-
-  res.pipe(file);
-
-  res.on('data', c => {
-    cur += c.length;
-
-    events.emit('downloading-module', { name, cur, total });
-  });
-
-  await new Promise((res) => file.on('close', res));
-
-  if (success) commitManifest();
-    else downloading.fail++;
-
-  events.emit('downloaded-module', {
-    name
-  });
-
-  downloading.done++;
-
-  if (downloading.done === downloading.total) {
-    events.emit('downloaded', {
-      failed: downloading.fail
-    });
+  if (!name || !ver) {
+    console.error('Module name or version is not defined:', { name, ver });
+    downloading.fail++;
+    downloading.done++;
+    return;
   }
 
-  installModule(name, ver, path);
+  const path = join(downloadPath, `${name}-${ver}.zip`);
+  const file = fs.createWriteStream(path);
+
+  let success, total, cur = 0;
+  
+  try {
+    const res = await redirs(`${baseUrl}/${name}/${ver}${qs}`);
+    success = res.statusCode === 200;
+    total = parseInt(res.headers['content-length'] ?? 1, 10);
+    
+    if (total <= 0) {
+      console.error('Invalid content-length for module:', { name, ver });
+      downloading.fail++;
+      downloading.done++;
+      return;
+    }
+
+    res.pipe(file);
+
+    res.on('data', c => {
+      cur += c.length;
+      events.emit('downloading-module', { name, cur, total });
+    });
+
+    await new Promise((resolve) => file.on('close', resolve));
+
+    if (success) {
+      commitManifest();
+    } else {
+      downloading.fail++;
+    }
+
+    events.emit('downloaded-module', { name });
+    downloading.done++;
+
+    if (downloading.done === downloading.total) {
+      events.emit('downloaded', { failed: downloading.fail });
+    }
+
+    await installModule(name, ver, path); 
+  } catch (error) {
+    console.error('Error downloading module:', error);
+    downloading.fail++;
+    downloading.done++;
+  }
 };
 
 const installModule = async (name, ver, path) => {
+  if (typeof installing.total === 'undefined') {
+    installing.total = 0;
+  }
   installing.total++;
 
-  // log('Modules', 'Installing', `${name}@${ver}`);
+  if (!path) {
+    console.error('Install path is not defined:', { name, ver });
+    installing.fail++;
+    installing.done++;
+    return;
+  }
 
   let err;
   const onErr = e => {
@@ -179,14 +204,14 @@ const installModule = async (name, ver, path) => {
     err = true;
 
     log('Modules', 'Failed install', name, e);
-
     finishInstall(name, ver, false);
   };
 
-
-  // Extract zip via unzip cmd line - replaces yauzl dep (speed++, size--, jank++)
   let total = 0, cur = 0;
-  execFile('unzip', ['-l', path], (e, o) => total = parseInt(o.toString().match(/([0-9]+) files/)?.[1] ?? 0)); // Get total count and extract in parallel
+
+  execFile('unzip', ['-l', path], (e, o) => {
+    total = parseInt(o.toString().match(/([0-9]+) files/)?.[1] ?? 0);
+  });
 
   const ePath = join(basePath, name);
   mkdir(ePath);
@@ -196,16 +221,15 @@ const installModule = async (name, ver, path) => {
   proc.on('error', (e) => {
     if (e.code === 'ENOENT') {
       require('electron').dialog.showErrorBox('Failed Dependency', 'Please install "unzip"');
-      process.exit(1); // Close now
+      process.exit(1);
     }
-
     onErr(e);
   });
+
   proc.stderr.on('data', onErr);
 
   proc.stdout.on('data', x => {
     cur += x.toString().split('\n').length;
-
     events.emit('installing-module', { name, cur, total });
   });
 
@@ -214,7 +238,6 @@ const installModule = async (name, ver, path) => {
 
     installed[name] = { installedVersion: ver };
     commitManifest();
-
     finishInstall(name, ver, true);
   });
 };
@@ -240,7 +263,6 @@ const finishInstall = (name, ver, success) => {
     resetTracking();
   }
 };
-
 
 exports.checkForUpdates = async () => {
   log('Modules', 'Checking');
@@ -270,19 +292,21 @@ exports.getInstalled = () => ({ ...installed });
 const commitManifest = () => fs.writeFileSync(manifestPath, JSON.stringify(installed, null, 2));
 
 exports.install = (name, def, { version } = {}) => {
-  if (exports.isInstalled(name, version)) {
-    if (!def) events.emit('installed-module', {
-      name,
-      succeeded: true
-    });
+  const final = { ...def };
+  if (typeof final === 'string') final.version = final;
 
-    return;
+  if (final.version && !exports.isInstalled(name, final.version)) {
+    installed[name] = { installedVersion: final.version };
+    commitManifest();
   }
+};
 
-  if (def) {
-    installed[name] = { installedVersion: 0 };
-    return commitManifest();
+exports.load = (name) => {
+  if (!exports.isInstalled(name)) return;
+
+  try {
+    return require(name);
+  } catch (e) {
+    log('Modules', 'Failed load', name);
   }
-
-  downloadModule(name, version ?? remote[name] ?? 0);
 };

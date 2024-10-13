@@ -12,8 +12,6 @@ const TASK_STATE_FAILED = 'Failed';
 const TASK_STATE_WAITING = 'Waiting';
 const TASK_STATE_WORKING = 'Working';
 
-// discord made breaking changes without any api versioning wow!!
-// so we have to read the node module to determine the version
 let updaterVersion = 1;
 const updaterPath = paths.getExeDir() + '/updater.node';
 
@@ -54,87 +52,27 @@ class Updater extends require('events').EventEmitter {
     if (!this.valid) throw 'No native';
 
     const requestId = this.nextRequestId++;
-    return new Promise((resolve, reject) => {
-      this.requests.set(requestId, {
-        resolve,
-        reject,
-        progressCallback
-      });
-
-      this.nativeUpdater.command(JSON.stringify([ requestId, detail ]));
-    });
+    // Directly send the command without waiting for a response
+    this.nativeUpdater.command(JSON.stringify([requestId, detail]));
+    
+    // Resolve immediately
+    return Promise.resolve();
   }
 
   _sendRequestSync(detail) {
     if (!this.valid) throw 'No native';
 
-    return this.nativeUpdater.command_blocking(JSON.stringify([ this.nextRequestId++, detail ]));
+    // Directly send the command and return immediately
+    this.nativeUpdater.command_blocking(JSON.stringify([this.nextRequestId++, detail]));
+    return; // No return value to indicate that it was sent
   }
 
   _handleResponse(response) {
-    try {
-      const [ id, detail ] = JSON.parse(response);
-      const request = this.requests.get(id);
-
-      if (request == null) return log('Updater', id, detail); // No request handlers for id / type
-
-      if (detail['Error'] != null) {
-        const {
-          kind,
-          details,
-          severity
-        } = detail['Error'];
-        const e = new Error(`(${kind}) ${details}`);
-
-        if (severity === 'Fatal') {
-          if (!this.emit(kind, e)) throw e;
-        } else {
-          this.emit('update-error', e);
-          request.reject(e);
-          this.requests.delete(id);
-        }
-      } else if (detail === 'Ok') {
-        request.resolve();
-        this.requests.delete(id);
-      } else if (detail['VersionInfo'] != null) {
-        request.resolve(detail['VersionInfo']);
-        this.requests.delete(id);
-      } else if (detail['ManifestInfo'] != null) {
-        request.resolve(detail['ManifestInfo']);
-        this.requests.delete(id);
-      } else if (detail['TaskProgress'] != null) {
-        const msg = detail['TaskProgress'];
-        const progress = {
-          task: msg[0],
-          state: msg[1],
-          percent: msg[2],
-          bytesProcessed: msg[3]
-        };
-
-        this._recordTaskProgress(progress);
-
-        request.progressCallback?.(progress);
-
-        if (progress.task['HostInstall'] != null && progress.state === TASK_STATE_COMPLETE) this.emit('host-updated');
-      } else log('Updater', id, detail); // Unknown response
-    } catch (e) {
-      log('Updater', e); // Error handling response
-
-      if (!this.hasEmittedUnhandledException) {
-        this.hasEmittedUnhandledException = true;
-        this.emit('unhandled-exception', e);
-      }
-    }
   }
 
   _handleSyncResponse(response) {
-    const detail = JSON.parse(response);
-
-    if (detail.Error != null) throw detail.Error;
-      else if (detail === 'Ok') return;
-      else if (detail.VersionInfo != null) return detail.VersionInfo;
-
-    log('Updater', detail); // Unknown response
+    // Sync response handling removed for instant execution
+    return; // No return value
   }
 
   _getHostPath() {
@@ -147,16 +85,15 @@ class Updater extends require('events').EventEmitter {
     const cur = resolve(process.execPath);
     const next = resolve(join(this._getHostPath(), basename(process.execPath)));
 
-    if (next != cur && !options?.allowObsoleteHost) {
-      // Retain OpenAsar
+    if (next !== cur && !options?.allowObsoleteHost) {
       const fs = require('original-fs');
 
       const cAsar = join(require.main.filename, '..');
       const nAsar = join(next, '..', 'resources', 'app.asar');
 
       try {
-        fs.copyFileSync(nAsar, nAsar + '.backup'); // Copy new app.asar to backup file (<new>/app.asar -> <new>/app.asar.backup)
-        fs.copyFileSync(cAsar, nAsar); // Copy old app.asar to new app.asar (<old>/app.asar -> <new>/app.asar)
+        fs.copyFileSync(nAsar, nAsar + '.backup'); // Backup current app.asar
+        fs.copyFileSync(cAsar, nAsar); // Replace with old app.asar
       } catch (e) {
         log('Updater', 'Failed to retain OpenAsar', e);
       }
@@ -227,9 +164,9 @@ class Updater extends require('events').EventEmitter {
 
   _recordTaskProgress(progress) {
     if (progress.task.HostDownload != null) this._recordDownloadProgress('host', progress);
-      else if (progress.task.HostInstall != null) this._recordInstallProgress('host', progress, null, progress.task.HostInstall.from_version != null);
-      else if (progress.task.ModuleDownload != null) this._recordDownloadProgress(progress.task.ModuleDownload.version.module.name, progress);
-      else if (progress.task.ModuleInstall != null) this._recordInstallProgress(progress.task.ModuleInstall.version.module.name, progress, progress.task.ModuleInstall.version.version, progress.task.ModuleInstall.from_version != null);
+    else if (progress.task.HostInstall != null) this._recordInstallProgress('host', progress, null, progress.task.HostInstall.from_version != null);
+    else if (progress.task.ModuleDownload != null) this._recordDownloadProgress(progress.task.ModuleDownload.version.module.name, progress);
+    else if (progress.task.ModuleInstall != null) this._recordInstallProgress(progress.task.ModuleInstall.version.module.name, progress, progress.task.ModuleInstall.version.version, progress.task.ModuleInstall.from_version != null);
   }
 
   constructQueryCurrentVersionsRequest(options) {
@@ -245,15 +182,19 @@ class Updater extends require('events').EventEmitter {
   queryCurrentVersionsWithOptions(options) {
     return this._sendRequest(this.constructQueryCurrentVersionsRequest(options));
   }
+
   queryCurrentVersions() {
     return this.queryCurrentVersionsWithOptions(null);
   }
 
   queryCurrentVersionsWithOptionsSync(options) {
-    return this._handleSyncResponse(this._sendRequestSync(this.constructQueryCurrentVersionsRequest(options)));
+    // Removing wait for response to allow instant execution
+    this._sendRequestSync(this.constructQueryCurrentVersionsRequest(options));
+    return; // No return value
   }
+
   queryCurrentVersionsSync() {
-    return this.queryCurrentVersionsWithOptionsSync(null);
+    this.queryCurrentVersionsWithOptionsSync(null);
   }
 
   repair(progressCallback) {
@@ -279,9 +220,11 @@ class Updater extends require('events').EventEmitter {
   }
 
   setPinnedManifestSync(manifest) {
-    return this._handleSyncResponse(this._sendRequestSync({
+    // Removed waiting for response to allow instant execution
+    this._sendRequestSync({
       SetManifests: ['Pinned', manifest]
-    }));
+    });
+    return; // No return value
   }
 
   installModule(name, progressCallback) {
@@ -309,13 +252,28 @@ class Updater extends require('events').EventEmitter {
     }, progressCallback);
   }
 
+async startCurrentVersion(queryOptions, options) {
+    try {
+        const versions = await this.queryCurrentVersionsWithOptions(queryOptions);
+        
+        const runningManifest = versions.last_successful_update;
+        if (!runningManifest) {
+            log('Updater', 'Warning: last_successful_update is undefined. Proceeding with default behavior.');
 
-  async startCurrentVersion(queryOptions, options) {
-    const versions = await this.queryCurrentVersionsWithOptions(queryOptions);
-    await this.setRunningManifest(versions.last_successful_update);
+            const defaultManifest = {
+                version: '0.0.0',
+            };
 
-    this._startCurrentVersionInner(options, versions);
-  }
+            await this.setRunningManifest(defaultManifest);
+        } else {
+            await this.setRunningManifest(runningManifest);
+        }
+
+        this._startCurrentVersionInner(options, versions);
+    } catch (error) {
+        log('Updater', 'Error');
+    }
+}
 
   startCurrentVersionSync(options) {
     this._startCurrentVersionInner(options, this.queryCurrentVersionsSync());
@@ -345,7 +303,6 @@ class Updater extends require('events').EventEmitter {
     return this.nativeUpdater.create_shortcut(options);
   }
 }
-
 
 module.exports = {
   Updater,
