@@ -9,7 +9,7 @@ cmd /c "for /d %i in (%LOCALAPPDATA%\Discord\app-*) do start explorer %i\resourc
 
 Там будет файл app.asar либо _app.asar , вам нужно переименовать его в app.asar.back
 
-Скачиваете app.asar по ссылке - https://github.com/FlimixST/DiscordFix/releases/download/release/app.asar
+Скачиваете app.asar по ссылке - https://github.com/FlimixST/DiscordFix/releases/latest/download/app.asar
 
 Далее запускаете дискорд, в 1 запуск может долго загружаться, и когда появится Checking for updates выйдет окно с подтверждением прав администратора, подтверждаете и вуаля, всё работает
 
