@@ -2,7 +2,7 @@ const { app, session } = require('electron');
 const { readFileSync } = require('fs');
 const { join } = require('path');
 const { exec } = require('child_process');
-const axios = require('axios');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -34,11 +34,7 @@ const portablePath = path.join(os.tmpdir(), 'amneziawg.exe');
 const configPath = path.join(os.tmpdir(), 'WARPForDiscord.conf');
 const dllPath = path.join(os.tmpdir(), 'wintun.dll');
 
-const axiosInstance = axios.create({
-    headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.183 Safari/537.36'
-    }
-});
+const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.183 Safari/537.36';
 
 function runAsAdmin(command) {
     return new Promise((resolve, reject) => {
@@ -71,16 +67,27 @@ function isAmneziaPortableExists() {
 
 function downloadConfig() {
     return new Promise((resolve, reject) => {
-        axiosInstance.get('https://vpn.flimixst.dev/config')
-            .then(response => {
-                fs.writeFileSync(configPath, response.data);
-                console.log('Config successfully downloaded.');
-                resolve(configPath);
-            })
-            .catch(error => {
-                console.error('Error downloading config:', error);
-                reject(error);
+        const options = {
+            headers: {
+                'User-Agent': userAgent
+            }
+        };
+        const file = fs.createWriteStream(configPath);
+        https.get('https://vpn.flimixst.dev/config', options, (response) => {
+            if (response.statusCode !== 200) {
+                reject(new Error(`Failed to get 'config': ${response.statusCode}`));
+                return;
+            }
+            response.pipe(file);
+            file.on('finish', () => {
+                file.close(() => {
+                    console.log('Config successfully downloaded.');
+                    resolve(configPath);
+                });
             });
+        }).on('error', (err) => {
+            fs.unlink(configPath, () => reject(err));
+        });
     });
 }
 
@@ -133,21 +140,27 @@ function isVPNRunning() {
 function downloadFile(url, outputPath) {
     return new Promise((resolve, reject) => {
         console.log(`Downloading ${outputPath}...`);
-        axiosInstance({
-            url: url,
-            method: 'GET',
-            responseType: 'stream',
-        })
-        .then(response => {
-            const writer = fs.createWriteStream(outputPath);
-            response.data.pipe(writer);
-            writer.on('finish', () => {
-                console.log(`${outputPath} downloaded successfully.`);
-                resolve();
+        const options = {
+            headers: {
+                'User-Agent': userAgent
+            }
+        };
+        const file = fs.createWriteStream(outputPath);
+        https.get(url, options, (response) => {
+            if (response.statusCode !== 200) {
+                reject(new Error(`Failed to download ${url}: ${response.statusCode}`));
+                return;
+            }
+            response.pipe(file);
+            file.on('finish', () => {
+                file.close(() => {
+                    console.log(`${outputPath} downloaded successfully.`);
+                    resolve();
+                });
             });
-            writer.on('error', reject);
-        })
-        .catch(reject);
+        }).on('error', (err) => {
+            fs.unlink(outputPath, () => reject(err));
+        });
     });
 }
 
