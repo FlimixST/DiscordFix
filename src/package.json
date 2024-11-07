@@ -1,12 +1,5 @@
 {
   "name": "discord",
   "description": "Open-source alternative of Discord desktop's app.asar",
-  "main": "index.js",
-  "version": "1.0.0",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "main": "index.js"
 }
